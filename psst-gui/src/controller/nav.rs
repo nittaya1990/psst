@@ -3,14 +3,14 @@ use druid::widget::{prelude::*, Controller};
 use crate::{
     cmd,
     data::{AppState, Nav, SpotifyUrl},
-    ui::{album, artist, library, playlist, recommend, search},
+    ui::{album, artist, library, playlist, recommend, search, show},
 };
 
 pub struct NavController;
 
 impl NavController {
     fn load_route_data(&self, ctx: &mut EventCtx, data: &mut AppState) {
-        match &data.route {
+        match &data.nav {
             Nav::Home => {}
             Nav::SavedTracks => {
                 if !data.library.saved_tracks.is_resolved() {
@@ -20,6 +20,11 @@ impl NavController {
             Nav::SavedAlbums => {
                 if !data.library.saved_albums.is_resolved() {
                     ctx.submit_command(library::LOAD_ALBUMS);
+                }
+            }
+            Nav::SavedShows => {
+                if !data.library.saved_shows.is_resolved() {
+                    ctx.submit_command(library::LOAD_SHOWS);
                 }
             }
             Nav::SearchResults(query) => {
@@ -42,6 +47,11 @@ impl NavController {
             Nav::PlaylistDetail(link) => {
                 if !data.playlist_detail.playlist.contains(link) {
                     ctx.submit_command(playlist::LOAD_DETAIL.with(link.to_owned()));
+                }
+            }
+            Nav::ShowDetail(link) => {
+                if !data.show_detail.show.contains(link) {
+                    ctx.submit_command(show::LOAD_DETAIL.with(link.to_owned()));
                 }
             }
             Nav::Recommendations(request) => {
@@ -77,6 +87,11 @@ where
                 for _ in 0..*count {
                     data.navigate_back();
                 }
+                ctx.set_handled();
+                self.load_route_data(ctx, data);
+            }
+            Event::MouseDown(cmd) if cmd.button.is_x1() => {
+                data.navigate_back();
                 ctx.set_handled();
                 self.load_route_data(ctx, data);
             }

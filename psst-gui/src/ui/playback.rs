@@ -13,17 +13,17 @@ use crate::{
     cmd,
     controller::PlaybackController,
     data::{
-        AppState, AudioAnalysis, NowPlaying, Playback, PlaybackOrigin, PlaybackState,
-        QueueBehavior, Track,
+        AppState, AudioAnalysis, Episode, NowPlaying, Playable, PlayableMatcher, Playback,
+        PlaybackOrigin, PlaybackState, QueueBehavior, ShowLink, Track,
     },
     widget::{icons, icons::SvgIcon, Empty, Maybe, MyWidgetExt, RemoteImage},
 };
 
-use super::{theme, utils};
+use super::{episode, theme, track, utils};
 
 pub fn panel_widget() -> impl Widget<AppState> {
     let seek_bar = Maybe::or_empty(SeekBar::new).lens(Playback::now_playing);
-    let item_info = Maybe::or_empty(playback_item_widget).lens(Playback::now_playing);
+    let item_info = Maybe::or_empty(playing_item_widget).lens(Playback::now_playing);
     let controls = Either::new(
         |playback, _| playback.now_playing.is_some(),
         player_widget(),
@@ -36,20 +36,40 @@ pub fn panel_widget() -> impl Widget<AppState> {
         .controller(PlaybackController::new())
 }
 
-fn playback_item_widget() -> impl Widget<NowPlaying> {
-    let cover_art = cover_widget(theme::grid(10.0));
+fn playing_item_widget() -> impl Widget<NowPlaying> {
+    let cover_art = cover_widget(theme::grid(8.0));
 
-    let track_name = Label::raw()
-        .with_line_break_mode(LineBreaking::Clip)
-        .with_font(theme::UI_FONT_MEDIUM)
-        .lens(NowPlaying::item.then(Track::name.in_arc()));
+    let name = PlayableMatcher::new()
+        .track(
+            Label::raw()
+                .with_line_break_mode(LineBreaking::Clip)
+                .with_font(theme::UI_FONT_MEDIUM)
+                .lens(Track::name.in_arc()),
+        )
+        .episode(
+            Label::raw()
+                .with_line_break_mode(LineBreaking::Clip)
+                .with_font(theme::UI_FONT_MEDIUM)
+                .lens(Episode::name.in_arc()),
+        )
+        .lens(NowPlaying::item);
 
-    let track_artist = Label::raw()
-        .with_line_break_mode(LineBreaking::Clip)
-        .with_text_size(theme::TEXT_SIZE_SMALL)
-        .lens(NowPlaying::item.then(Track::lens_artist_name().in_arc()));
+    let detail = PlayableMatcher::new()
+        .track(
+            Label::raw()
+                .with_line_break_mode(LineBreaking::Clip)
+                .with_text_size(theme::TEXT_SIZE_SMALL)
+                .lens(Track::lens_artist_name().in_arc()),
+        )
+        .episode(
+            Label::raw()
+                .with_line_break_mode(LineBreaking::Clip)
+                .with_text_size(theme::TEXT_SIZE_SMALL)
+                .lens(Episode::show.in_arc().then(ShowLink::name)),
+        )
+        .lens(NowPlaying::item);
 
-    let track_origin = ViewSwitcher::new(
+    let origin = ViewSwitcher::new(
         |origin: &PlaybackOrigin, _| origin.clone(),
         |origin, _, _| {
             Flex::row()
@@ -68,29 +88,35 @@ fn playback_item_widget() -> impl Widget<NowPlaying> {
     .lens(NowPlaying::origin);
 
     Flex::row()
-        .with_child(Flex::column().with_child(cover_art))
+        .with_child(cover_art)
+        .with_spacer(theme::grid(2.0))
         .with_flex_child(
             Flex::column()
                 .cross_axis_alignment(CrossAxisAlignment::Start)
-                .with_child(track_name)
+                .with_child(name)
                 .with_spacer(2.0)
-                .with_child(track_artist)
+                .with_child(detail)
                 .with_spacer(2.0)
-                .with_child(track_origin)
-                .padding(theme::grid(2.0)),
+                .with_child(origin),
             1.0,
         )
+        .padding(theme::grid(1.0))
         .link()
         .on_click(|ctx, now_playing, _| {
             ctx.submit_command(cmd::NAVIGATE.with(now_playing.origin.to_nav()));
         })
+        .context_menu(|now_playing| match &now_playing.item {
+            Playable::Track(track) => track::track_menu(track, &now_playing.library),
+            Playable::Episode(episode) => episode::episode_menu(episode, &now_playing.library),
+        })
 }
 
-pub fn cover_widget(size: f64) -> impl Widget<NowPlaying> {
+fn cover_widget(size: f64) -> impl Widget<NowPlaying> {
     RemoteImage::new(utils::placeholder_widget(), move |np: &NowPlaying, _| {
         np.cover_image_url(size, size).map(|url| url.into())
     })
     .fix_size(size, size)
+    .clip(Size::new(size, size).to_rounded_rect(4.0))
 }
 
 fn playback_origin_icon(origin: &PlaybackOrigin) -> &'static SvgIcon {
@@ -99,6 +125,7 @@ fn playback_origin_icon(origin: &PlaybackOrigin) -> &'static SvgIcon {
         PlaybackOrigin::Album { .. } => &icons::ALBUM,
         PlaybackOrigin::Artist { .. } => &icons::ARTIST,
         PlaybackOrigin::Playlist { .. } => &icons::PLAYLIST,
+        PlaybackOrigin::Show { .. } => &icons::PODCAST,
         PlaybackOrigin::Search { .. } => &icons::SEARCH,
         PlaybackOrigin::Recommendations { .. } => &icons::SEARCH,
     }
@@ -211,8 +238,8 @@ fn durations_widget() -> impl Widget<NowPlaying> {
     Label::dynamic(|now_playing: &NowPlaying, _| {
         format!(
             "{} / {}",
-            utils::as_minutes_and_seconds(&now_playing.progress),
-            utils::as_minutes_and_seconds(&now_playing.item.duration)
+            utils::as_minutes_and_seconds(now_playing.progress),
+            utils::as_minutes_and_seconds(now_playing.item.duration())
         )
     })
     .with_text_size(theme::TEXT_SIZE_SMALL)
@@ -368,9 +395,6 @@ impl Widget<NowPlaying> for SeekBar {
         data: &NowPlaying,
         _env: &Env,
     ) {
-        if !old_data.analysis.same(&data.analysis) || !old_data.item.same(&data.item) {
-            // self.loudness_path = compute_loudness_path(&ctx.size(), &data);
-        }
         if !old_data.same(data) {
             ctx.request_paint();
         }
@@ -392,14 +416,6 @@ impl Widget<NowPlaying> for SeekBar {
         } else {
             paint_audio_analysis(ctx, data, &self.loudness_path, env)
         }
-    }
-}
-
-fn _compute_loudness_path(bounds: &Size, data: &NowPlaying) -> BezPath {
-    if let Some(analysis) = data.analysis.resolved() {
-        _compute_loudness_path_from_analysis(bounds, &data.item.duration, analysis)
-    } else {
-        BezPath::new()
     }
 }
 
@@ -468,7 +484,7 @@ fn paint_audio_analysis(ctx: &mut PaintCtx, data: &NowPlaying, path: &BezPath, e
     let bounds = ctx.size();
 
     let elapsed_time = data.progress.as_secs_f64();
-    let total_time = data.item.duration.as_secs_f64();
+    let total_time = data.item.duration().as_secs_f64();
     let elapsed_frac = elapsed_time / total_time;
     let elapsed_width = bounds.width * elapsed_frac;
     let elapsed = Size::new(elapsed_width, bounds.height).to_rect();
@@ -488,7 +504,7 @@ fn paint_audio_analysis(ctx: &mut PaintCtx, data: &NowPlaying, path: &BezPath, e
 
 fn paint_progress_bar(ctx: &mut PaintCtx, data: &NowPlaying, env: &Env) {
     let elapsed_time = data.progress.as_secs_f64();
-    let total_time = data.item.duration.as_secs_f64();
+    let total_time = data.item.duration().as_secs_f64();
 
     let (elapsed_color, remaining_color) = if ctx.is_hot() {
         (env.get(theme::GREY_200), env.get(theme::GREY_500))

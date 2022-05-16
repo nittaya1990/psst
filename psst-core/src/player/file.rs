@@ -1,6 +1,6 @@
 use std::{
     io,
-    io::{BufReader, Seek, SeekFrom},
+    io::{Seek, SeekFrom},
     path::PathBuf,
     sync::Arc,
     thread,
@@ -9,30 +9,30 @@ use std::{
 };
 
 use crate::{
-    audio_decode::VorbisDecoder,
-    audio_decrypt::AudioDecrypt,
-    audio_key::AudioKey,
-    audio_normalize::NormalizationData,
+    audio::{
+        decode::{AudioCodecFormat, AudioDecoder},
+        decrypt::{AudioDecrypt, AudioKey},
+        normalize::NormalizationData,
+    },
     cache::CacheHandle,
     cdn::{CdnHandle, CdnUrl},
     error::Error,
     item_id::{FileId, ItemId},
     protocol::metadata::mod_AudioFile::Format,
-    stream_storage::{StreamReader, StreamRequest, StreamStorage, StreamWriter},
     util::OffsetFile,
 };
 
-pub type FileAudioSource = VorbisDecoder<OffsetFile<AudioDecrypt<BufReader<StreamReader>>>>;
+use super::storage::{StreamRequest, StreamStorage, StreamWriter};
 
 #[derive(Debug, Clone, Copy)]
-pub struct AudioPath {
+pub struct MediaPath {
     pub item_id: ItemId,
     pub file_id: FileId,
     pub file_format: Format,
     pub duration: Duration,
 }
 
-pub enum AudioFile {
+pub enum MediaFile {
     Streamed {
         streamed_file: Arc<StreamedFile>,
         servicing_handle: JoinHandle<()>,
@@ -42,29 +42,44 @@ pub enum AudioFile {
     },
 }
 
-impl AudioFile {
-    pub fn compatible_audio_formats(preferred_bitrate: usize) -> &'static [Format] {
-        match preferred_bitrate {
+impl MediaFile {
+    pub fn supported_audio_formats_for_bitrate(bitrate: usize) -> &'static [Format] {
+        match bitrate {
             96 => &[
                 Format::OGG_VORBIS_96,
+                Format::MP3_96,
                 Format::OGG_VORBIS_160,
+                Format::MP3_160,
+                Format::MP3_160_ENC,
+                Format::MP3_256,
                 Format::OGG_VORBIS_320,
+                Format::MP3_320,
             ],
             160 => &[
                 Format::OGG_VORBIS_160,
+                Format::MP3_160,
+                Format::MP3_160_ENC,
+                Format::MP3_256,
                 Format::OGG_VORBIS_320,
+                Format::MP3_320,
                 Format::OGG_VORBIS_96,
+                Format::MP3_96,
             ],
             320 => &[
                 Format::OGG_VORBIS_320,
+                Format::MP3_320,
+                Format::MP3_256,
                 Format::OGG_VORBIS_160,
+                Format::MP3_160,
+                Format::MP3_160_ENC,
                 Format::OGG_VORBIS_96,
+                Format::MP3_96,
             ],
             _ => unreachable!(),
         }
     }
 
-    pub fn open(path: AudioPath, cdn: CdnHandle, cache: CacheHandle) -> Result<Self, Error> {
+    pub fn open(path: MediaPath, cdn: CdnHandle, cache: CacheHandle) -> Result<Self, Error> {
         let cached_path = cache.audio_file_path(path.file_id);
         if cached_path.exists() {
             let cached_file = CachedFile::open(path, cached_path)?;
@@ -86,26 +101,26 @@ impl AudioFile {
         }
     }
 
-    pub fn path(&self) -> AudioPath {
+    pub fn path(&self) -> MediaPath {
         match self {
             Self::Streamed { streamed_file, .. } => streamed_file.path,
             Self::Cached { cached_file, .. } => cached_file.path,
         }
     }
 
-    pub fn audio_source(
-        &self,
-        key: AudioKey,
-    ) -> Result<(FileAudioSource, NormalizationData), Error> {
-        let reader = match self {
-            Self::Streamed { streamed_file, .. } => streamed_file.storage.reader()?,
-            Self::Cached { cached_file, .. } => cached_file.storage.reader()?,
-        };
-        let buffered = BufReader::new(reader);
-        let mut decrypted = AudioDecrypt::new(key, buffered);
+    pub fn storage(&self) -> &StreamStorage {
+        match self {
+            Self::Streamed { streamed_file, .. } => &streamed_file.storage,
+            Self::Cached { cached_file, .. } => &cached_file.storage,
+        }
+    }
+
+    pub fn audio_source(&self, key: AudioKey) -> Result<(AudioDecoder, NormalizationData), Error> {
+        let reader = self.storage().reader()?;
+        let mut decrypted = AudioDecrypt::new(key, reader);
         let normalization = NormalizationData::parse(&mut decrypted)?;
         let encoded = OffsetFile::new(decrypted, self.header_length())?;
-        let decoded = VorbisDecoder::new(encoded)?;
+        let decoded = AudioDecoder::new(encoded, self.codec_format())?;
         Ok((decoded, normalization))
     }
 
@@ -115,10 +130,24 @@ impl AudioFile {
             _ => 0,
         }
     }
+
+    fn codec_format(&self) -> AudioCodecFormat {
+        match self.path().file_format {
+            Format::OGG_VORBIS_96 | Format::OGG_VORBIS_160 | Format::OGG_VORBIS_320 => {
+                AudioCodecFormat::OggVorbis
+            }
+            Format::MP3_256
+            | Format::MP3_320
+            | Format::MP3_160
+            | Format::MP3_96
+            | Format::MP3_160_ENC => AudioCodecFormat::Mp3,
+            _ => unreachable!(),
+        }
+    }
 }
 
 pub struct StreamedFile {
-    path: AudioPath,
+    path: MediaPath,
     storage: StreamStorage,
     url: CdnUrl,
     cdn: CdnHandle,
@@ -126,7 +155,7 @@ pub struct StreamedFile {
 }
 
 impl StreamedFile {
-    fn open(path: AudioPath, cdn: CdnHandle, cache: CacheHandle) -> Result<StreamedFile, Error> {
+    fn open(path: MediaPath, cdn: CdnHandle, cache: CacheHandle) -> Result<StreamedFile, Error> {
         // First, we need to resolve URL of the file contents.
         let url = cdn.resolve_audio_file_url(path.file_id)?;
         log::debug!("resolved file URL: {:?}", url.url);
@@ -216,12 +245,12 @@ impl StreamedFile {
 }
 
 pub struct CachedFile {
-    path: AudioPath,
+    path: MediaPath,
     storage: StreamStorage,
 }
 
 impl CachedFile {
-    fn open(path: AudioPath, file_path: PathBuf) -> Result<Self, Error> {
+    fn open(path: MediaPath, file_path: PathBuf) -> Result<Self, Error> {
         Ok(Self {
             path,
             storage: StreamStorage::from_complete_file(file_path)?,

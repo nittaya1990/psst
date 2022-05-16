@@ -3,12 +3,18 @@ use std::sync::Arc;
 use druid::{im::Vector, Data, Lens};
 use serde::{Deserialize, Deserializer, Serialize};
 
-use crate::data::{Image, Promise, Track};
+use crate::data::{user::PublicUser, Image, Promise, Track, TrackId};
 
 #[derive(Clone, Debug, Data, Lens)]
 pub struct PlaylistDetail {
     pub playlist: Promise<Playlist, PlaylistLink>,
     pub tracks: Promise<PlaylistTracks, PlaylistLink>,
+}
+
+#[derive(Clone, Debug, Data, Lens, Deserialize)]
+pub struct PlaylistAddTrack {
+    pub link: PlaylistLink,
+    pub track_id: TrackId,
 }
 
 #[derive(Clone, Debug, Data, Lens, Deserialize)]
@@ -20,6 +26,8 @@ pub struct Playlist {
     #[serde(rename = "tracks")]
     #[serde(deserialize_with = "deserialize_track_count")]
     pub track_count: usize,
+    pub owner: PublicUser,
+    pub collaborative: bool,
 }
 
 impl Playlist {

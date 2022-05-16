@@ -63,8 +63,20 @@ fn view_menu() -> Menu<AppState> {
             .hotkey(SysMods::Cmd, "3"),
         )
         .entry(
+            MenuItem::new(
+                LocalizedString::new("menu-item-saved-shows").with_placeholder("Saved Shows"),
+            )
+            .command(cmd::NAVIGATE.with(Nav::SavedShows))
+            .hotkey(SysMods::Cmd, "4"),
+        )
+        .entry(
             MenuItem::new(LocalizedString::new("menu-item-search").with_placeholder("Search..."))
                 .command(cmd::SET_FOCUS.to(cmd::WIDGET_SEARCH_INPUT))
                 .hotkey(SysMods::Cmd, "l"),
+        )
+        .entry(
+            MenuItem::new(LocalizedString::new("menu-item-find").with_placeholder("Find..."))
+                .command(cmd::TOGGLE_FINDER)
+                .hotkey(SysMods::Cmd, "f"),
         )
 }

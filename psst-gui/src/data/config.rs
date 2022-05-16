@@ -3,9 +3,9 @@ use std::{env, env::VarError, fs::File, path::PathBuf};
 use druid::{Data, Lens};
 use platform_dirs::AppDirs;
 use psst_core::{
-    audio_player::PlaybackConfig,
     cache::mkdir_if_not_exists,
     connection::Credentials,
+    player::PlaybackConfig,
     session::{SessionConfig, SessionConnection},
 };
 use serde::{Deserialize, Serialize};
@@ -75,6 +75,7 @@ pub struct Config {
     pub volume: f64,
     pub last_route: Option<Nav>,
     pub queue_behavior: QueueBehavior,
+    pub show_track_cover: bool,
 }
 
 impl Default for Config {
@@ -86,6 +87,7 @@ impl Default for Config {
             volume: 1.0,
             last_route: Default::default(),
             queue_behavior: Default::default(),
+            show_track_cover: Default::default(),
         }
     }
 }
@@ -95,6 +97,13 @@ impl Config {
         const USE_XDG_ON_MACOS: bool = false;
 
         AppDirs::new(Some(APP_NAME), USE_XDG_ON_MACOS)
+    }
+
+    pub fn spotify_local_files_file(username: &str) -> Option<PathBuf> {
+        AppDirs::new(Some("spotify"), false).map(|dir| {
+            let path = format!("Users/{}-user/local-files.bnk", username);
+            dir.config_dir.join(path)
+        })
     }
 
     pub fn cache_dir() -> Option<PathBuf> {
@@ -134,6 +143,10 @@ impl Config {
 
     pub fn store_credentials(&mut self, credentials: Credentials) {
         self.credentials.replace(credentials);
+    }
+
+    pub fn username(&self) -> Option<&str> {
+        self.credentials.as_ref().map(|c| c.username.as_str())
     }
 
     pub fn session(&self) -> SessionConfig {

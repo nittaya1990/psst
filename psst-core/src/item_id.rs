@@ -17,6 +17,8 @@ const BASE62_DIGITS: &[u8] = b"0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLM
 const BASE16_DIGITS: &[u8] = b"0123456789abcdef";
 
 impl ItemId {
+    pub const INVALID: Self = Self::new(0u128, ItemIdType::Unknown);
+
     pub const fn new(id: u128, id_type: ItemIdType) -> Self {
         Self { id, id_type }
     }
@@ -57,6 +59,16 @@ impl ItemId {
         }
     }
 
+    /// Converts an ID to an URI as described in: https://developer.spotify.com/documentation/web-api/#spotify-uris-and-ids
+    pub fn to_uri(&self) -> Option<String> {
+        let b64 = self.to_base62();
+        match self.id_type {
+            ItemIdType::Track => Some(format!("spotify:track:{}", b64)),
+            ItemIdType::Podcast => Some(format!("spotify:podcast:{}", b64)),
+            ItemIdType::Unknown => None,
+        }
+    }
+
     pub fn to_base16(&self) -> String {
         format!("{:032x}", self.id)
     }
@@ -73,6 +85,18 @@ impl ItemId {
 
     pub fn to_raw(&self) -> [u8; 16] {
         self.id.to_be_bytes()
+    }
+}
+
+impl Default for ItemId {
+    fn default() -> Self {
+        Self::INVALID
+    }
+}
+
+impl From<ItemId> for String {
+    fn from(id: ItemId) -> Self {
+        id.to_base62()
     }
 }
 

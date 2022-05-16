@@ -7,7 +7,9 @@ use std::{
 use serde::Deserialize;
 
 use crate::{
-    access_token::TokenProvider, error::Error, item_id::FileId, session::SessionService,
+    error::Error,
+    item_id::FileId,
+    session::{access_token::TokenProvider, SessionService},
     util::default_ureq_agent_builder,
 };
 
@@ -45,7 +47,7 @@ impl Cdn {
             .set("Authorization", &format!("Bearer {}", access_token.token))
             .call()?;
 
-        #[derive(Deserialize, Debug, Clone)]
+        #[derive(Deserialize)]
         struct AudioFileLocations {
             result: String,
             cdnurl: Vec<String>,

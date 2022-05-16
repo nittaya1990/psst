@@ -9,7 +9,7 @@ use std::{
 };
 
 use byteorder::{ReadBytesExt, BE};
-use hmac::{Hmac, Mac, NewMac};
+use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
 use sha1::Sha1;
 use socks::Socks5Stream;
@@ -41,9 +41,9 @@ const AP_FALLBACK: &str = "ap.spotify.com:443";
 #[serde(from = "SerializedCredentials")]
 #[serde(into = "SerializedCredentials")]
 pub struct Credentials {
-    username: String,
-    auth_data: Vec<u8>,
-    auth_type: AuthenticationType,
+    pub username: String,
+    pub auth_data: Vec<u8>,
+    pub auth_type: AuthenticationType,
 }
 
 impl Credentials {
@@ -360,6 +360,7 @@ fn client_response_encrypted(credentials: Credentials) -> ShannonMsg {
         },
         system_info: SystemInfo {
             device_id: Some(DEVICE_ID.to_string()),
+            system_information_string: Some("librespot_but_actually_psst".to_string()),
             ..SystemInfo::default()
         },
         ..ClientResponseEncrypted::default()
